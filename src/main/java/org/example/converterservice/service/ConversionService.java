@@ -11,6 +11,7 @@ import org.example.converterservice.event.FileConversionRequestedEvent;
 import org.example.converterservice.model.entity.Inbox;
 import org.example.converterservice.model.entity.Outbox;
 import org.example.converterservice.model.status.InboxStatus;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
@@ -22,6 +23,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
+import static org.example.converterservice.event.FileConversionEventType.FILE_CONVERSION_COMPLETED;
 import static org.example.converterservice.model.status.InboxStatus.*;
 import static org.example.converterservice.model.status.OutboxStatus.NEW;
 
@@ -35,6 +37,8 @@ public class ConversionService {
     private final TransactionTemplate transactionTemplate;
     private final InboxRepository inboxRepository;
     private final OutboxRepository outboxRepository;
+    @Value("${app.minio.bucket}")
+    private String bucketName;
 
     @SneakyThrows
     public void process(FileConversionRequestedEvent event) {
@@ -44,8 +48,6 @@ public class ConversionService {
 
         Inbox inbox = inboxRepository.findByEventId(eventId).orElseGet(() -> createInbox(eventId));
 
-        log.info("INBOX - событие получено. eventId={}, status={}", eventId, inbox.getStatus());
-
         if (inbox.getStatus() == SUCCESS) {
             log.info("INBOX - событие уже успешно обработано, пропускаем. eventId={}", eventId);
             return;
@@ -53,35 +55,28 @@ public class ConversionService {
 
         String filePath = event.payload().filePath();
 
-        try (InputStream inputStream = minioService.download("converter-files", filePath)) {
+        try (InputStream inputStream = minioService.download(bucketName, filePath)) {
             String fileType = getFileType(filePath);
-
-            log.info("CONVERTER - определён тип файла. eventId={}, filePath={}, fileType={}",
-                    eventId,
-                    filePath,
-                    fileType);
-
             Converter converter = getConverter(fileType);
 
-            log.info("CONVERTER - выбран конвертер. eventId={}, fileType={}, converter={}",
+            log.info("CONVERTER - определён тип файла и выбран конвертер. eventId={}, fileType={}, converter={}",
                     eventId,
                     fileType,
                     converter.getClass().getSimpleName());
 
             byte[] pdf = converter.convert(inputStream);
 
-            log.info("CONVERTER - конвертация завершена. eventId={}, filePath={}, pdfSize={} bytes",
+            log.info("CONVERTER - PDF успешно создан. eventId={}, filePath={}, pdfSize={} bytes",
                     eventId,
                     filePath,
                     pdf.length);
 
             String resultFilePath = filePath + ".pdf";
-
-            minioService.upload("converter-files", resultFilePath, pdf);
+            minioService.upload(bucketName, resultFilePath, pdf);
 
             FileConversionCompletedEvent completedEvent = new FileConversionCompletedEvent(
                     eventId,
-                    "FILE_CONVERSION_COMPLETED",
+                    FILE_CONVERSION_COMPLETED.name(),
                     OffsetDateTime.now(ZoneOffset.UTC),
                     new FileConversionCompletedEvent.Payload(resultFilePath));
 

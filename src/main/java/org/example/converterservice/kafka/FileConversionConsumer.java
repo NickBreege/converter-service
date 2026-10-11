@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 public class FileConversionConsumer {
     private final ConversionService conversionService;
 
-    @KafkaListener(topics = "file-conversion-requested")
+    @KafkaListener(topics = "${app.kafka.topics.requested}")
     public void consume(FileConversionRequestedEvent event) {
         conversionService.process(event);
     }

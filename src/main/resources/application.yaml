@@ -33,6 +33,15 @@ minio:
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin123456}
 
+app:
+  kafka:
+    topics:
+      requested: file-conversion-requested
+      completed: file-conversion-completed
+      requested-dlt: file-conversion-requested-dlt
+  minio:
+    bucket: converter-files
+
 logging:
   level:
     org:

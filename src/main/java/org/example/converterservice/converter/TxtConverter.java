@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 
 @Component
 public class TxtConverter implements Converter {
+    private static final String FONT_PATH = "/fonts/DejaVuSans.ttf";
 
     @Override
     public boolean supports(String fileType) {
@@ -50,7 +51,7 @@ public class TxtConverter implements Converter {
     }
 
     private InputStream getFontStream() {
-        InputStream fontStream = getClass().getResourceAsStream("/fonts/DejaVuSans.ttf");
+        InputStream fontStream = getClass().getResourceAsStream(FONT_PATH);
 
         if (fontStream == null) {
             throw new IllegalStateException("Шрифт DejaVuSans.ttf не найден");
