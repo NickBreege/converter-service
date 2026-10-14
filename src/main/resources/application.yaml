@@ -1,4 +1,7 @@
 spring:
+  application:
+    name: converter-service
+
   datasource:
     url: jdbc:postgresql://localhost:5433/converterservice
     username: postgres
@@ -41,6 +44,11 @@ app:
       requested-dlt: file-conversion-requested-dlt
   minio:
     bucket: converter-files
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
 
 logging:
   level:
