@@ -27,6 +27,12 @@ spring:
       group-id: converter-service
       auto-offset-reset: earliest
       enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+      properties:
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: org.example.converterservice.event.FileConversionRequestedEvent
+        spring.json.trusted.packages: org.example.converterservice.event
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer

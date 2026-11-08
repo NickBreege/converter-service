@@ -1,7 +1,6 @@
 package org.example.converterservice.service;
 
 import lombok.RequiredArgsConstructor;
-import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.example.converterservice.converter.Converter;
 import org.example.converterservice.dao.InboxRepository;
@@ -40,16 +39,15 @@ public class ConversionService {
     @Value("${app.minio.bucket}")
     private String bucketName;
 
-    @SneakyThrows
     public void process(FileConversionRequestedEvent event) {
         UUID eventId = event.eventId();
 
-        log.info("CONVERSION - начало обработки события. eventId={}, filePath={}", eventId, event.payload().filePath());
+        log.info("Начало обработки события. eventId={}, filePath={}", eventId, event.payload().filePath());
 
         Inbox inbox = inboxRepository.findByEventId(eventId).orElseGet(() -> createInbox(eventId));
 
-        if (inbox.getStatus() == SUCCESS) {
-            log.info("INBOX - событие уже успешно обработано, пропускаем. eventId={}", eventId);
+        if (inbox.getStatus() == SUCCESS || inbox.getStatus() == FAILED) {
+            log.info("Это событие уже обработано ({}), пропускаем. eventId={}", inbox.getStatus(), eventId);
             return;
         }
 
@@ -59,17 +57,13 @@ public class ConversionService {
             String fileType = getFileType(filePath);
             Converter converter = getConverter(fileType);
 
-            log.info("CONVERTER - определён тип файла и выбран конвертер. eventId={}, fileType={}, converter={}",
-                    eventId,
-                    fileType,
-                    converter.getClass().getSimpleName());
+            log.info("Определён тип файла и выбран конвертер. eventId={}, fileType={}, converter={}",
+                    eventId, fileType, converter.getClass().getSimpleName());
 
             byte[] pdf = converter.convert(inputStream);
 
-            log.info("CONVERTER - PDF успешно создан. eventId={}, filePath={}, pdfSize={} bytes",
-                    eventId,
-                    filePath,
-                    pdf.length);
+            log.info("PDF успешно создан. eventId={}, filePath={}, pdfSize={} bytes",
+                    eventId, filePath, pdf.length);
 
             String resultFilePath = filePath + ".pdf";
             minioService.upload(bucketName, resultFilePath, pdf);
@@ -78,22 +72,39 @@ public class ConversionService {
                     eventId,
                     FILE_CONVERSION_COMPLETED.name(),
                     OffsetDateTime.now(ZoneOffset.UTC),
-                    new FileConversionCompletedEvent.Payload(resultFilePath));
+                    new FileConversionCompletedEvent.Payload(resultFilePath, null)
+            );
 
             transactionTemplate.executeWithoutResult(status -> {
                 saveToOutbox(completedEvent);
                 updateInboxStatus(inbox, SUCCESS);
             });
 
-            log.info("CONVERSION - обработка успешно завершена. eventId={}, sourceFile={}, resultFile={}",
-                    eventId,
-                    filePath,
-                    resultFilePath);
+            log.info("Обработка успешно завершена. eventId={}, sourceFile={}, resultFile={}",
+                    eventId, filePath, resultFilePath);
 
         } catch (Exception e) {
-            updateInboxStatus(inbox, FAILED);
-            log.error("CONVERSION - ошибка при обработке события. eventId={}, filePath={}", eventId, filePath, e);
-            throw e;
+            log.error("Ошибка при обработке события. eventId={}, filePath={}", eventId, filePath, e);
+
+            FileConversionCompletedEvent failedEvent = new FileConversionCompletedEvent(
+                    eventId,
+                    FILE_CONVERSION_COMPLETED.name(),
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    new FileConversionCompletedEvent.Payload(null, e.getMessage())
+            );
+
+            try {
+                transactionTemplate.executeWithoutResult(status -> {
+                    saveToOutbox(failedEvent);
+                    updateInboxStatus(inbox, FAILED);
+                });
+                log.info("Событие об ошибке сохранено в Outbox. eventId={}", eventId);
+
+            } catch (Exception outboxEx) {
+                log.error("Не удалось сохранить событие об ошибке в Outbox. eventId={}", eventId, outboxEx);
+                e.addSuppressed(outboxEx);
+                throw new RuntimeException("Не удалось сохранить событие об ошибке в Outbox", e);
+            }
         }
     }
 

@@ -29,7 +29,7 @@ public class OutboxService {
     @Scheduled(fixedDelay = 5000)
     @SchedulerLock(name = "outbox-publisher", lockAtMostFor = "10m", lockAtLeastFor = "1s")
     public void publishNewEvents() {
-        List<Outbox> events = outboxRepository.findByStatus(NEW);
+        List<Outbox> events = outboxRepository.findTop100ByStatusOrderByCreatedAtAsc(NEW);
 
         for (Outbox outbox : events) {
             publishEvent(outbox);

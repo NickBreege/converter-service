@@ -11,7 +11,8 @@ public record FileConversionCompletedEvent(
 ) {
 
     public record Payload(
-            String filePath
+            String filePath,
+            String errorMessage
     ) {
     }
 }

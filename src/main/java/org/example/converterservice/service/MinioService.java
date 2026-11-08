@@ -19,7 +19,7 @@ public class MinioService {
 
     public InputStream download(String bucket, String filePath) {
         try {
-            log.info("MINIO - начало скачивания файла. bucket={}, filePath={}", bucket, filePath);
+            log.info("Начало скачивания файла. bucket={}, filePath={}", bucket, filePath);
 
             GetObjectResponse inputStream = minioClient.getObject(
                     GetObjectArgs.builder()
@@ -28,12 +28,12 @@ public class MinioService {
                             .build()
             );
 
-            log.info("MINIO - поток файла успешно получен. bucket={}, filePath={}", bucket, filePath);
+            log.info("Поток файла успешно получен. bucket={}, filePath={}", bucket, filePath);
 
             return inputStream;
 
         } catch (Exception e) {
-            log.error("MINIO - ошибка скачивания файла. bucket={}, filePath={}", bucket, filePath, e);
+            log.error("Ошибка скачивания файла. bucket={}, filePath={}", bucket, filePath, e);
 
             throw new RuntimeException("Не удалось скачать файл из MinIO: " + filePath, e);
         }
@@ -41,7 +41,7 @@ public class MinioService {
 
     public void upload(String bucket, String filePath, byte[] content) {
         try {
-            log.info("MINIO - начало загрузки файла. bucket={}, filePath={}, size={} bytes",
+            log.info("Начало загрузки файла в бакет. bucket={}, filePath={}, size={} bytes",
                     bucket,
                     filePath,
                     content.length);
@@ -54,13 +54,13 @@ public class MinioService {
                     .build()
             );
 
-            log.info("MINIO - файл успешно загружен. bucket={}, filePath={}, size={} bytes",
+            log.info("Файл успешно загружен в бакет. bucket={}, filePath={}, size={} bytes",
                     bucket,
                     filePath,
                     content.length);
 
         } catch (Exception e) {
-            log.error("MINIO - ошибка загрузки файла. bucket={}, filePath={}", bucket, filePath, e);
+            log.error("Ошибка загрузки файла в бакет. bucket={}, filePath={}", bucket, filePath, e);
 
             throw new RuntimeException("Не удалось загрузить файл в MinIO: " + filePath, e);
         }
