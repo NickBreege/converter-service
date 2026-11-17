@@ -1,0 +1,160 @@
+package org.example.converterservice.service;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.example.converterservice.converter.Converter;
+import org.example.converterservice.dao.InboxRepository;
+import org.example.converterservice.dao.OutboxRepository;
+import org.example.converterservice.event.FileConversionCompletedEvent;
+import org.example.converterservice.event.FileConversionRequestedEvent;
+import org.example.converterservice.model.entity.Inbox;
+import org.example.converterservice.model.entity.Outbox;
+import org.example.converterservice.model.status.InboxStatus;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.ObjectMapper;
+
+import java.io.InputStream;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.UUID;
+
+import static org.example.converterservice.event.FileConversionEventType.FILE_CONVERSION_COMPLETED;
+import static org.example.converterservice.model.status.InboxStatus.*;
+import static org.example.converterservice.model.status.OutboxStatus.NEW;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ConversionService {
+    private final MinioService minioService;
+    private final List<Converter> converters;
+    private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
+    private final InboxRepository inboxRepository;
+    private final OutboxRepository outboxRepository;
+    @Value("${app.minio.bucket}")
+    private String bucketName;
+
+    public void process(FileConversionRequestedEvent event) {
+        UUID eventId = event.eventId();
+
+        log.info("Начало обработки события. eventId={}, filePath={}", eventId, event.payload().filePath());
+
+        Inbox inbox = inboxRepository.findByEventId(eventId).orElseGet(() -> createInbox(eventId));
+
+        if (inbox.getStatus() == SUCCESS || inbox.getStatus() == FAILED) {
+            log.info("Это событие уже обработано ({}), пропускаем. eventId={}", inbox.getStatus(), eventId);
+            return;
+        }
+
+        String filePath = event.payload().filePath();
+
+        try (InputStream inputStream = minioService.download(bucketName, filePath)) {
+            String fileType = getFileType(filePath);
+            Converter converter = getConverter(fileType);
+
+            log.info("Определён тип файла и выбран конвертер. eventId={}, fileType={}, converter={}",
+                    eventId, fileType, converter.getClass().getSimpleName());
+
+            byte[] pdf = converter.convert(inputStream);
+
+            log.info("PDF успешно создан. eventId={}, filePath={}, pdfSize={} bytes",
+                    eventId, filePath, pdf.length);
+
+            String resultFilePath = filePath + ".pdf";
+            minioService.upload(bucketName, resultFilePath, pdf);
+
+            FileConversionCompletedEvent completedEvent = new FileConversionCompletedEvent(
+                    eventId,
+                    FILE_CONVERSION_COMPLETED.name(),
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    new FileConversionCompletedEvent.Payload(resultFilePath, null)
+            );
+
+            transactionTemplate.executeWithoutResult(status -> {
+                saveToOutbox(completedEvent);
+                updateInboxStatus(inbox, SUCCESS);
+            });
+
+            log.info("Обработка успешно завершена. eventId={}, sourceFile={}, resultFile={}",
+                    eventId, filePath, resultFilePath);
+
+        } catch (Exception e) {
+            log.error("Ошибка при обработке события. eventId={}, filePath={}", eventId, filePath, e);
+
+            FileConversionCompletedEvent failedEvent = new FileConversionCompletedEvent(
+                    eventId,
+                    FILE_CONVERSION_COMPLETED.name(),
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    new FileConversionCompletedEvent.Payload(null, e.getMessage())
+            );
+
+            try {
+                transactionTemplate.executeWithoutResult(status -> {
+                    saveToOutbox(failedEvent);
+                    updateInboxStatus(inbox, FAILED);
+                });
+                log.info("Событие об ошибке сохранено в Outbox. eventId={}", eventId);
+
+            } catch (Exception outboxEx) {
+                log.error("Не удалось сохранить событие об ошибке в Outbox. eventId={}", eventId, outboxEx);
+                e.addSuppressed(outboxEx);
+                throw new RuntimeException("Не удалось сохранить событие об ошибке в Outbox", e);
+            }
+        }
+    }
+
+    private Converter getConverter(String fileType) {
+        return converters.stream()
+                .filter(converter -> converter.supports(fileType))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Неподдерживаемый тип файла: " + fileType));
+    }
+
+    private String getFileType(String filePath) {
+        int lastDotIndex = filePath.lastIndexOf('.');
+
+        if (lastDotIndex == -1) {
+            throw new IllegalArgumentException("У файла отсутствует расширение: " + filePath);
+        }
+
+        return filePath.substring(lastDotIndex + 1).toLowerCase();
+    }
+
+    private Inbox createInbox(UUID eventId) {
+        Inbox inbox = new Inbox();
+        inbox.setEventId(eventId);
+        inbox.setStatus(RECEIVED);
+        inbox.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        return inboxRepository.save(inbox);
+    }
+
+    private void updateInboxStatus(Inbox inbox, InboxStatus status) {
+        inbox.setStatus(status);
+
+        if (status == SUCCESS || status == FAILED) {
+            inbox.setProcessedAt(LocalDateTime.now(ZoneOffset.UTC));
+        }
+
+        inboxRepository.save(inbox);
+    }
+
+    private void saveToOutbox(FileConversionCompletedEvent event) {
+        Outbox outbox = new Outbox();
+
+        outbox.setEventId(event.eventId());
+        outbox.setEventType(event.eventType());
+        outbox.setPayload(objectMapper.writeValueAsString(event));
+        outbox.setStatus(NEW);
+        outbox.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
+
+        outboxRepository.save(outbox);
+
+        log.info("Событие {} сохранено в Outbox", event.eventId());
+    }
+}
